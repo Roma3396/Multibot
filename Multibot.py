@@ -69,6 +69,17 @@ async def check_sub(user_id):
     except:
         return False
 
+async def send_film_card(chat_id, film):
+    text = f"🎬 **{film[3]}**\n\n📅 Yili: {film[4]}\n🔢 Kodi: {film[5]}\n📝 Izoh: {film[6]}\n\n❤️ {film[7]} ta like"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Chapga", callback_data=f"prev_{film[0]}"),
+         InlineKeyboardButton(text=f"❤️ {film[7]}", callback_data=f"like_{film[0]}"),
+         InlineKeyboardButton(text="💾 Saqlash", callback_data=f"save_{film[0]}"),
+         InlineKeyboardButton(text="➡️ O'nga", callback_data=f"next_{film[0]}")],
+        [InlineKeyboardButton(text="👁 Tomosha qilish", callback_data=f"watch_{film[0]}")]
+    ])
+    await bot.send_photo(chat_id, film[1], caption=text, reply_markup=kb, parse_mode="Markdown")
+
 # --- HANDLERS ---
 @dp.message(CommandStart())
 async def start(message: types.Message):
@@ -140,6 +151,62 @@ async def get_video(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Film muvaffaqiyatli saqlandi! 🎬✅", reply_markup=main_menu(message.from_user.id))
 
+# --- KNOPKALAR ISHLASHI (LIKE, SAVE, WATCH, NAVIGATSIYA) ---
+@dp.callback_query(F.data.startswith(("next_", "prev_", "like_", "save_", "watch_")))
+async def film_actions(call: types.CallbackQuery):
+    action, f_id = call.data.split("_")
+    conn = sqlite3.connect('films.db')
+    c = conn.cursor()
+
+    if action == "like":
+        c.execute("UPDATE films SET likes = likes + 1 WHERE id = ?", (f_id,))
+        conn.commit()
+        c.execute("SELECT likes FROM films WHERE id = ?", (f_id,))
+        new_likes = c.fetchone()[0]
+        await call.answer(f"Sizga yoqdi! ❤️ (Jami: {new_likes})")
+        # Like bosilganda raqam o'zgarishi uchun xabarni yangilash lozim bo'lsa navigatsiya logikasini ishlatsa bo'ladi
+
+    elif action == "save":
+        c.execute("SELECT * FROM favorites WHERE user_id = ? AND film_id = ?", (call.from_user.id, f_id))
+        if not c.fetchone():
+            c.execute("INSERT INTO favorites (user_id, film_id) VALUES (?, ?)", (call.from_user.id, f_id))
+            conn.commit()
+            await call.answer("Saqlanganlarga qo'shildi! 💾", show_alert=True)
+        else:
+            await call.answer("Bu film allaqachon saqlangan! ✅", show_alert=True)
+
+    elif action == "watch":
+        c.execute("SELECT video FROM films WHERE id = ?", (f_id,))
+        v = c.fetchone()
+        if v:
+            await bot.send_video(call.message.chat.id, v[0], caption="Marhamat, tomosha qiling! 🍿")
+        await call.answer()
+
+    elif action in ["next", "prev"]:
+        if action == "next":
+            c.execute("SELECT * FROM films WHERE id < ? ORDER BY id DESC LIMIT 1", (f_id,))
+        else:
+            c.execute("SELECT * FROM films WHERE id > ? ORDER BY id ASC LIMIT 1", (f_id,))
+        
+        film = c.fetchone()
+        if film:
+            text = f"🎬 **{film[3]}**\n\n📅 Yili: {film[4]}\n🔢 Kodi: {film[5]}\n📝 Izoh: {film[6]}\n\n❤️ {film[7]} ta like"
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⬅️ Chapga", callback_data=f"prev_{film[0]}"),
+                 InlineKeyboardButton(text=f"❤️ {film[7]}", callback_data=f"like_{film[0]}"),
+                 InlineKeyboardButton(text="💾 Saqlash", callback_data=f"save_{film[0]}"),
+                 InlineKeyboardButton(text="➡️ O'nga", callback_data=f"next_{film[0]}")],
+                [InlineKeyboardButton(text="👁 Tomosha qilish", callback_data=f"watch_{film[0]}")]
+            ])
+            await call.message.edit_media(
+                types.InputMediaPhoto(media=film[1], caption=text, parse_mode="Markdown"), 
+                reply_markup=kb
+            )
+        else:
+            await call.answer("Boshqa film topilmadi! 😊", show_alert=True)
+
+    conn.close()
+
 # --- QIDIRUV ---
 @dp.message(F.text == "🔍 Qidiruv")
 async def search_start(message: types.Message, state: FSMContext):
@@ -164,35 +231,9 @@ async def search_result(message: types.Message, state: FSMContext):
         await send_film_card(message.chat.id, film)
         await state.clear()
     else:
-        await message.answer(f"'{q}' bo'yicha hech narsa topilmadi.")
+        await message.answer(f"'{q}' bo'yicha hech narsa topilmadi. Qaytadan urinib ko'ring yoki '🔙 Orqaga' tugmasini bosing.")
 
-# --- QOLGAN FUNKSIYALAR ---
-async def send_film_card(chat_id, film):
-    text = f"🎬 **{film[3]}**\n\n📅 Yili: {film[4]}\n🔢 Kodi: {film[5]}\n📝 Izoh: {film[6]}\n\n❤️ {film[7]} ta like"
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Chapga", callback_data=f"prev_{film[0]}"),
-         InlineKeyboardButton(text=f"❤️ {film[7]}", callback_data=f"like_{film[0]}"),
-         InlineKeyboardButton(text="💾 Saqlash", callback_data=f"save_{film[0]}"),
-         InlineKeyboardButton(text="➡️ O'nga", callback_data=f"next_{film[0]}")],
-        [InlineKeyboardButton(text="👁 Tomosha qilish", callback_data=f"watch_{film[0]}")]
-    ])
-    await bot.send_photo(chat_id, film[1], caption=text, reply_markup=kb, parse_mode="Markdown")
-
-@dp.callback_query(F.data.startswith(("next_", "prev_", "like_", "save_", "watch_")))
-async def film_actions(call: types.CallbackQuery):
-    action, f_id = call.data.split("_")
-    conn = sqlite3.connect('films.db')
-    c = conn.cursor()
-    if action == "watch":
-        c.execute("SELECT video FROM films WHERE id = ?", (f_id,))
-        v = c.fetchone()
-        await bot.send_video(call.message.chat.id, v[0])
-        await call.answer()
-        conn.close()
-        return
-    # Like va Save logikasi... (tepadagi kod bilan bir xil)
-    conn.close()
-
+# --- BOSHQA FUNKSIYALAR ---
 @dp.message(F.text == "🔥 Rek")
 async def show_rek(message: types.Message):
     conn = sqlite3.connect('films.db')
@@ -201,7 +242,7 @@ async def show_rek(message: types.Message):
     film = c.fetchone()
     conn.close()
     if film: await send_film_card(message.chat.id, film)
-    else: await message.answer("Filmlar yo'q.")
+    else: await message.answer("Hozircha filmlar yo'q.")
 
 @dp.message(F.text == "💾 Saqlangan")
 async def show_saved(message: types.Message):
@@ -212,7 +253,7 @@ async def show_saved(message: types.Message):
     conn.close()
     if films:
         for film in films: await send_film_card(message.chat.id, film)
-    else: await message.answer("Saqlanganlar bo'sh.")
+    else: await message.answer("Sizda saqlangan filmlar yo'q 📭")
 
 @dp.message(F.text == "📩 Murojat")
 async def support(message: types.Message, state: FSMContext):
@@ -223,33 +264,36 @@ async def support(message: types.Message, state: FSMContext):
 async def send_support(message: types.Message, state: FSMContext):
     if message.text == "🔙 Orqaga":
         await state.clear()
-        await message.answer("Menyu", reply_markup=main_menu(message.from_user.id))
+        await message.answer("Asosiy menyu", reply_markup=main_menu(message.from_user.id))
         return
     for admin in ADMINS:
-        await bot.send_message(admin, f"📩 Murojat ({message.from_user.id}): {message.text}")
-    await message.answer("Yuborildi! ✅")
+        await bot.send_message(admin, f"📩 Yangi murojat ({message.from_user.id}):\n{message.text}")
+    await message.answer("Murojatingiz yuborildi! ✅")
     await state.clear()
 
 @dp.message(F.text == "📢 Post Joylash", F.from_user.id.in_(ADMINS))
 async def post_start(message: types.Message, state: FSMContext):
     await state.set_state(AdminState.waiting_for_post)
-    await message.answer("Postni yuboring:", reply_markup=back_kb())
+    await message.answer("Reklama postini yuboring:", reply_markup=back_kb())
 
 @dp.message(AdminState.waiting_for_post)
 async def broadcast(message: types.Message, state: FSMContext):
     if message.text == "🔙 Orqaga":
         await state.clear()
-        await message.answer("Menyu", reply_markup=main_menu(message.from_user.id))
+        await message.answer("Admin panel", reply_markup=main_menu(message.from_user.id))
         return
     conn = sqlite3.connect('films.db')
     c = conn.cursor()
     c.execute("SELECT user_id FROM users")
     users = c.fetchall()
     conn.close()
+    count = 0
     for user in users:
-        try: await message.copy_to(user[0])
+        try:
+            await message.copy_to(user[0])
+            count += 1
         except: pass
-    await message.answer("Tayyor!")
+    await message.answer(f"Post {count} ta foydalanuvchiga yuborildi!")
     await state.clear()
 
 @dp.message(F.text == "🔙 Orqaga")
@@ -257,9 +301,11 @@ async def go_back(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Asosiy menyu", reply_markup=main_menu(message.from_user.id))
 
+# --- RUN BOT ---
 async def main():
     init_db()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+                                                                               
